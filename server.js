@@ -1,51 +1,41 @@
-const fs = require('fs');
-const https = require('https');
-const { exec } = require('child_process');
-const express = require('express');
-const bodyParser = require('body-parser');
-const path = require('path');
+const express = require("express");
+const { exec } = require("child_process");
+const fs = require("fs");
+const https = require("https");
+const path = require("path");
+const ffmpegPath = require("ffmpeg-static");
 
 const app = express();
-app.use(bodyParser.json());
+app.use(express.json());
 
-app.post('/trim', (req, res) => {
+app.post("/trim", async (req, res) => {
   const { inputUrl, trimSeconds } = req.body;
-
   if (!inputUrl || !trimSeconds) {
-    return res.status(400).json({ error: 'Missing inputUrl or trimSeconds' });
+    return res.status(400).json({ error: "Missing inputUrl or trimSeconds" });
   }
 
-  const inputPath = path.join('/tmp', 'input.mp4');
-  const outputPath = path.join('/tmp', 'output.mp4');
+  const inputPath = path.join(__dirname, "input.mp4");
+  const outputPath = path.join(__dirname, "output.mp4");
 
-  // Download the video file from Backblaze URL
   const file = fs.createWriteStream(inputPath);
-  https.get(inputUrl, response => {
+  https.get(inputUrl, (response) => {
     response.pipe(file);
-    file.on('finish', () => {
+    file.on("finish", () => {
       file.close(() => {
-        // Run FFmpeg to trim video
-        const cmd = `ffmpeg -y -i ${inputPath} -t ${trimSeconds} -c copy ${outputPath}`;
-
+        const cmd = `${ffmpegPath} -y -i ${inputPath} -t ${trimSeconds} -c copy ${outputPath}`;
         exec(cmd, (error, stdout, stderr) => {
           if (error) {
-            return res.status(500).json({ error: 'FFmpeg failed', stderr });
+            console.error("FFmpeg error:", stderr);
+            return res.status(500).json({ error: "FFmpeg failed", stderr });
           }
 
-          res.sendFile(outputPath, err => {
-            if (err) {
-              res.status(500).json({ error: 'Failed to send trimmed file' });
-            }
-
-            // Clean up temporary files
-            fs.unlink(inputPath, () => {});
-            fs.unlink(outputPath, () => {});
+          res.sendFile(outputPath, () => {
+            fs.unlinkSync(inputPath);
+            fs.unlinkSync(outputPath);
           });
         });
       });
     });
-  }).on('error', err => {
-    res.status(500).json({ error: 'Failed to download video', details: err.message });
   });
 });
 
