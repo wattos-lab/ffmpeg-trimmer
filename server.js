@@ -1,30 +1,53 @@
-const express = require('express');
-const { exec } = require('child_process');
 const fs = require('fs');
-const cors = require('cors');
-const app = express();
-const port = process.env.PORT || 3000;
+const https = require('https');
+const { exec } = require('child_process');
+const express = require('express');
+const bodyParser = require('body-parser');
+const path = require('path');
 
-app.use(express.json());
-app.use(cors());
+const app = express();
+app.use(bodyParser.json());
 
 app.post('/trim', (req, res) => {
-  const { inputUrl, start = 0, duration = 59, outputName = 'output.mp4' } = req.body;
+  const { inputUrl, trimSeconds } = req.body;
 
-  const outputPath = `/tmp/${outputName}`;
-  const command = `ffmpeg -ss ${start} -i "${inputUrl}" -t ${duration} -c:v libx264 -c:a aac -y "${outputPath}"`;
+  if (!inputUrl || !trimSeconds) {
+    return res.status(400).json({ error: 'Missing inputUrl or trimSeconds' });
+  }
 
-  exec(command, (err, stdout, stderr) => {
-    if (err) {
-      console.error('FFmpeg error:', stderr);
-      return res.status(500).json({ error: 'FFmpeg failed', stderr });
-    }
+  const inputPath = path.join('/tmp', 'input.mp4');
+  const outputPath = path.join('/tmp', 'output.mp4');
 
-    res.download(outputPath, (err) => {
-      if (err) console.error('Download error:', err);
-      fs.unlinkSync(outputPath); // Clean up
+  // Download the video file from Backblaze URL
+  const file = fs.createWriteStream(inputPath);
+  https.get(inputUrl, response => {
+    response.pipe(file);
+    file.on('finish', () => {
+      file.close(() => {
+        // Run FFmpeg to trim video
+        const cmd = `ffmpeg -y -i ${inputPath} -t ${trimSeconds} -c copy ${outputPath}`;
+
+        exec(cmd, (error, stdout, stderr) => {
+          if (error) {
+            return res.status(500).json({ error: 'FFmpeg failed', stderr });
+          }
+
+          res.sendFile(outputPath, err => {
+            if (err) {
+              res.status(500).json({ error: 'Failed to send trimmed file' });
+            }
+
+            // Clean up temporary files
+            fs.unlink(inputPath, () => {});
+            fs.unlink(outputPath, () => {});
+          });
+        });
+      });
     });
+  }).on('error', err => {
+    res.status(500).json({ error: 'Failed to download video', details: err.message });
   });
 });
 
-app.listen(port, () => console.log(`Trimmer API running on port ${port}`));
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log(`Trimmer API running on port ${PORT}`));
