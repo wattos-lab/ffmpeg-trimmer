@@ -10,22 +10,37 @@ app.use(express.json());
 
 app.post("/trim", async (req, res) => {
   const { inputUrl, trimSeconds } = req.body;
-  if (!inputUrl || !trimSeconds) {
+
+  if (!inputUrl || trimSeconds === undefined) {
     return res.status(400).json({ error: "Missing inputUrl or trimSeconds" });
+  }
+
+  if (isNaN(trimSeconds)) {
+    return res.status(400).json({ error: "trimSeconds must be a number" });
   }
 
   const inputPath = path.join(__dirname, "input.mp4");
   const outputPath = path.join(__dirname, "output.mp4");
 
   const file = fs.createWriteStream(inputPath);
+
   https.get(inputUrl, (response) => {
+    if (response.statusCode !== 200) {
+      return res
+        .status(400)
+        .json({ error: `Failed to download video. Status: ${response.statusCode}` });
+    }
+
     response.pipe(file);
+
     file.on("finish", () => {
       file.close(() => {
-        const cmd = `${ffmpegPath} -y -i ${inputPath} -t ${trimSeconds} -c copy ${outputPath}`;
+        const cmd = `"${ffmpegPath}" -y -i "${inputPath}" -t ${trimSeconds} -c copy "${outputPath}"`;
+
         exec(cmd, (error, stdout, stderr) => {
           if (error) {
             console.error("FFmpeg error:", stderr);
+            fs.unlinkSync(inputPath);
             return res.status(500).json({ error: "FFmpeg failed", stderr });
           }
 
@@ -36,6 +51,8 @@ app.post("/trim", async (req, res) => {
         });
       });
     });
+  }).on("error", (err) => {
+    return res.status(500).json({ error: "Download error", details: err.message });
   });
 });
 
